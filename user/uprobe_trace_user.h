@@ -32,8 +32,8 @@ int set_target_file(char* file_name){
     return ret;
 }
 
-int set_fun_offset(unsigned long fun_offset){
-    int ret = syscall(__NR_mincore,fun_offset,TRACE_FLAG+SET_MODULE_OFFSET,"");
+int set_fun_offset(unsigned long fun_offset,char *fun_name){
+    int ret = syscall(__NR_mincore,fun_offset,TRACE_FLAG+SET_MODULE_OFFSET,fun_name);
     return ret;
 }
 

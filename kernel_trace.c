@@ -24,12 +24,14 @@ int (*kern_path)(const char *name, unsigned int flags, struct path *path) = 0;
 struct inode *(*igrab)(struct inode *inode) = 0;
 void (*path_put)(const struct path *path) = 0;
 void (*rcu_read_unlock)(void) = 0;
+unsigned long (*perf_instruction_pointer)(struct pt_regs *regs) = 0;
 
 
 char file_name[MAX_PATH_LEN];
 uid_t target_uid = -1;
 unsigned long fun_offsets[MAX_HOOK_NUM];
 int hook_num = 0;
+struct rb_root fun_info_tree = RB_ROOT;
 static struct inode *inode;
 unsigned long module_base = 0;
 static struct uprobe_consumer trace_uc;
@@ -53,11 +55,21 @@ void before_mincore(hook_fargs3_t *args, void *udata){
         }
 
         unsigned long fun_offset = (unsigned long)syscall_argn(args, 0);
+        const char __user *tfun_name = (typeof(tfun_name))syscall_argn(args, 2);
+        char fun_name[MAX_FUN_NAME];
+        compat_strncpy_from_user(fun_name,tfun_name,sizeof(fun_name));
+        int insert_ret = insert_key_value(&fun_info_tree,fun_offset,fun_name);
+        if(insert_ret==-1){
+            logke("+Test-Log+ same fun 0x%llx set uprobe\n",fun_offset);
+            goto error_out;
+        }
+//        logkd("+Test-Log+ fun_name:%s,fun_offset:0x%llx\n",fun_name,fun_offset);
         int hret = uprobe_register(inode,fun_offset,&trace_uc);
         if(hret<0){
             logke("+Test-Log+ set uprobe error in 0x%llx\n",fun_offset);
             goto error_out;
         }
+
         fun_offsets[hook_num] = fun_offset;
         hook_num++;
         goto success_out;
@@ -97,6 +109,7 @@ void before_mincore(hook_fargs3_t *args, void *udata){
             uprobe_unregister(inode,fun_offsets[i],&trace_uc);
         }
         hook_num = 0;
+        destroy_entire_tree(&fun_info_tree);
         logkd("+Test-Log+ success clear all uprobes\n");
         goto success_out;
     }
@@ -113,13 +126,17 @@ success_out:
 }
 
 
-static int trace_handler (struct uprobe_consumer *self, struct mpt_regs *regs){
+static int trace_handler(struct uprobe_consumer *self, struct pt_regs *regs){
     struct task_struct *task = current;
     struct cred* cred = *(struct cred**)((uintptr_t)task + task_struct_offset.cred_offset);
     uid_t uid = *(uid_t*)((uintptr_t)cred + cred_offset.uid_offset);
     if(uid==target_uid){
-        logkd("+Test-Log+ test_uid:%d\n",uid);
-        logkd("+Test-Log+ target_fun 0x%llx calling\n",regs->pc-module_base);
+        unsigned long fun_offset = perf_instruction_pointer(regs)-module_base;
+        struct my_key_value *tfun = search_key_value(&fun_info_tree,fun_offset);
+        if(likely(tfun)){
+            logkd("+Test-Log+ fun_name:%s,fun_offset:0x%llx calling\n",tfun->value,fun_offset);
+        }
+//        logkd("+Test-Log+ fun_offset:%llx\n",perf_instruction_pointer(regs)-module_base);
     }
     return 0;
 }
@@ -135,6 +152,14 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
     igrab = (typeof(igrab))kallsyms_lookup_name("igrab");
     path_put = (typeof(path_put))kallsyms_lookup_name("path_put");
     rcu_read_unlock = (typeof(rcu_read_unlock))kallsyms_lookup_name("rcu_read_unlock");
+    perf_instruction_pointer = (typeof(perf_instruction_pointer))kallsyms_lookup_name("perf_instruction_pointer");
+
+
+    rb_erase = (typeof(rb_erase))kallsyms_lookup_name("rb_erase");
+    rb_insert_color = (typeof(rb_insert_color))kallsyms_lookup_name("rb_insert_color");
+    rb_first = (typeof(rb_first))kallsyms_lookup_name("rb_first");
+    kmalloc = (typeof(kmalloc))kallsyms_lookup_name("__kmalloc");
+    kfree = (typeof(kfree))kallsyms_lookup_name("kfree");
 
     logkd("+Test-Log+ mtask_pid_nr_ns:%llx\n",mtask_pid_nr_ns);
     logkd("+Test-Log+ uprobe_register:%llx\n",uprobe_register);
@@ -144,7 +169,15 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
     logkd("+Test-Log+ path_put:%llx\n",path_put);
     logkd("+Test-Log+ rcu_read_unlock:%llx\n",rcu_read_unlock);
 
-    if(!(mtask_pid_nr_ns && uprobe_register && uprobe_unregister && kern_path && igrab && path_put && rcu_read_unlock)){
+    logkd("+Test-Log+ rb_erase:%llx\n",rb_erase);
+    logkd("+Test-Log+ rb_insert_color:%llx\n",rb_insert_color);
+    logkd("+Test-Log+ rb_first:%llx\n",rb_first);
+    logkd("+Test-Log+ kmalloc:%llx\n",kmalloc);
+    logkd("+Test-Log+ kfree:%llx\n",kfree);
+
+    if(!(mtask_pid_nr_ns && uprobe_register && uprobe_unregister
+    && kern_path && igrab && path_put && rcu_read_unlock
+    && rb_erase && rb_insert_color && rb_first)){
         logke("+Test-Log+ can not find some fun addr\n");
         return -1;
     }
@@ -156,6 +189,8 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
         logke("+Test-Log+ hook __NR_kexec_file_load error\n");
         return -1;
     }
+
+
     logkd("+Test-Log+ success init\n");
     return 0;
 }
@@ -175,6 +210,7 @@ static long kernel_trace_exit(void *__user reserved)
         uprobe_unregister(inode,fun_offsets[i],&trace_uc);
     }
     logkd("+Test-Log+ success clear all uprobes\n");
+    destroy_entire_tree(&fun_info_tree);
     logkd("kpm kernel_trace  exit\n");
 }
 

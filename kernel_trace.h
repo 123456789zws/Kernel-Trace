@@ -1,8 +1,10 @@
 #include <asm/ptrace.h>
 #include <linux/spinlock.h>
 #include "uprobe_trace.h"
+#include "mrbtree.h"
 
 #define MAX_PATH_LEN 300
+#define MAX_FUN_NAME 150
 #define LOOKUP_FOLLOW		0x0001
 #define HASH_LEN_DECLARE u32 hash; u32 len
 
@@ -46,23 +48,23 @@ enum uprobe_filter_ctx {
     UPROBE_FILTER_MMAP,
 };
 
-struct mpt_regs {
-	union {
-		struct user_pt_regs user_regs;
-		struct {
-			u64 regs[31];
-			u64 sp;
-			u64 pc;
-			u64 pstate;
-		};
-	};
-};
+//struct mpt_regs {
+//	union {
+//		struct user_pt_regs user_regs;
+//		struct {
+//			u64 regs[31];
+//			u64 sp;
+//			u64 pc;
+//			u64 pstate;
+//		};
+//	};
+//};
 
 struct uprobe_consumer {
-    int (*handler)(struct uprobe_consumer *self, struct mpt_regs *regs);
+    int (*handler)(struct uprobe_consumer *self, struct pt_regs *regs);
     int (*ret_handler)(struct uprobe_consumer *self,
                        unsigned long func,
-                       struct mpt_regs *regs);
+                       struct pt_regs *regs);
     bool (*filter)(struct uprobe_consumer *self,
                    enum uprobe_filter_ctx ctx,
                    struct mm_struct *mm);
