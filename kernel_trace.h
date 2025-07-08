@@ -6,6 +6,7 @@
 #define _THIS_IP_  ({ __label__ __here; __here: (unsigned long)&&__here; })
 #define MAX_PATH_LEN 300
 #define MAX_FUN_NAME 150
+#define INS_LEN 4
 #define LOOKUP_FOLLOW		0x0001
 #define HASH_LEN_DECLARE u32 hash; u32 len
 

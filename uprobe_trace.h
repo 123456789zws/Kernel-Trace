@@ -7,6 +7,7 @@ enum trace_info {
     SET_TARGET_FILE,
     SET_MODULE_BASE,
     SET_FUN_INFO,
+    FIX_ORI_INS,
     SET_TARGET_UPROBE,
     SET_TARGET_UID,
     CLEAR_UPROBE,

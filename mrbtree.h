@@ -33,7 +33,7 @@ static inline void rb_link_node(struct rb_node *node, struct rb_node *parent,str
 }
 
 
-int insert_key_value(struct rb_root *root, unsigned long key, const char *value)
+int insert_key_value(struct rb_root *root, unsigned long key, const char *value, int value_len)
 {
     struct rb_node **new = &(root->rb_node);
     struct rb_node *parent = NULL;
@@ -63,8 +63,8 @@ int insert_key_value(struct rb_root *root, unsigned long key, const char *value)
         kfree(data);
         return -1;
     }
-    strcpy(data->value, value);
-
+//    strcpy(data->value, value);
+    memcpy(data->value,value,value_len);
     // 设置键值
     data->key = key;
 
