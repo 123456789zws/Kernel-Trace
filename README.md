@@ -19,7 +19,7 @@
 上述函数的返回结果有SET_TRACE_SUCCESS、SET_TRACE_ERROR两种，分别表示设置成功和失败。
 
 # 使用示例
-编程思路可以参考[示例](https://github.com/AndroidReverser-Test/Il2cppTraceModule/blob/main/app/src/main/cpp/il2cpp_trace.cpp)
+编程思路可以参考[示例](https://github.com/AndroidReverser-Test/KernelTraceDemo/blob/main/app/src/main/cpp/kerneltracedemo.cpp)
 
 # 支持的内核版本
 目前只在5.10以及5.15两个版本通过测试，理论上5.10以上版本都能正常使用。

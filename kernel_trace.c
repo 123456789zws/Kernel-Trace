@@ -4,17 +4,15 @@
 #include <linux/printk.h>
 #include <linux/cred.h>
 #include <taskext.h>
-#include <linux/printk.h>
 #include <linux/uaccess.h>
 #include <asm/current.h>
 #include <linux/string.h>
 #include <syscall.h>
-#include <asm/current.h>
 #include <hook.h>
 #include "kernel_trace.h"
 
 KPM_NAME("kernel_trace");
-KPM_VERSION("3.7.0");
+KPM_VERSION("4.0.0");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("Test");
 KPM_DESCRIPTION("use uprobe trace some fun in kpm");
@@ -30,7 +28,9 @@ int (*trace_printk)(unsigned long ip, const char *fmt, ...) = 0;
 
 int (*bpf_probe_read_user)(void *dst, u32 size,const void __user *unsafe_ptr) = 0;
 
-void *show_map_vma_addr;
+unsigned long (*get_unmapped_area)(struct file *file, unsigned long addr, unsigned long len,unsigned long pgoff, unsigned long flags) = 0;
+
+void *xol_add_vma_addr;
 void *copy_insn_addr;
 
 
@@ -57,20 +57,16 @@ void before_copy_insn(hook_fargs5_t *args, void *udata){
     }
 }
 
-void before_show_map_vma(hook_fargs2_t *args, void *udata)
-{
-    struct seq_file* o_seq_file;
-    struct vm_area_struct *ovma;
-    unsigned long start, end;
+void before_xol_add_vma(hook_fargs2_t *args, void *udata){
+    struct xol_area *o_area;
 
-    o_seq_file = (struct seq_file*)args->arg0;
-    ovma = (struct vm_area_struct*)args->arg1;
-    start = ovma->vm_start;
-    end = ovma->vm_end;
-    if(start==0x7ffffff000 && end==0x8000000000){
-        logkd("+Test-Log+ find uprobe item\n");
-        args->skip_origin = 1;
+    o_area = (struct xol_area*)args->arg1;
+    if(!o_area->vaddr){
+        o_area->xol_mapping.name = "Kernel-Trace";
+        o_area->vaddr = get_unmapped_area(NULL, 0,PAGE_SIZE, 0, 0);
+        logkd("+Test-Log+ create map item:Kernel-Trace\n");
     }
+
 }
 
 void before_mincore(hook_fargs3_t *args, void *udata){
@@ -234,7 +230,9 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
     trace_printk = (typeof(trace_printk))kallsyms_lookup_name("__trace_printk");
     bpf_probe_read_user = (typeof(bpf_probe_read_user))kallsyms_lookup_name("bpf_probe_read_user");
 
-    show_map_vma_addr = (void *)kallsyms_lookup_name("show_map_vma");
+    get_unmapped_area = (typeof(get_unmapped_area))kallsyms_lookup_name("get_unmapped_area");
+
+    xol_add_vma_addr = (void *)kallsyms_lookup_name("xol_add_vma");
 
     copy_insn_addr = (void *)kallsyms_lookup_name("__copy_insn");
 
@@ -255,14 +253,16 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
     logkd("+Test-Log+ trace_printk:%llx\n",trace_printk);
     logkd("+Test-Log+ bpf_probe_read_user:%llx\n",bpf_probe_read_user);
 
-    logkd("+Test-Log+ show_map_vma_addr:%llx\n",show_map_vma_addr);
+    logkd("+Test-Log+ get_unmapped_area:%llx\n",get_unmapped_area);
+
+    logkd("+Test-Log+ xol_add_vma_addr:%llx\n",xol_add_vma_addr);
 
     logkd("+Test-Log+ copy_insn_addr:%llx\n",copy_insn_addr);
 
     if(!(mtask_pid_nr_ns && uprobe_register && uprobe_unregister
     && kern_path && igrab && path_put && rcu_read_unlock
     && rb_erase && rb_insert_color && rb_first && trace_printk
-    && bpf_probe_read_user && show_map_vma_addr && copy_insn_addr)){
+    && bpf_probe_read_user && get_unmapped_area && xol_add_vma_addr && copy_insn_addr)){
         logke("+Test-Log+ can not find some fun addr\n");
         return -1;
     }
@@ -275,9 +275,9 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
         return -1;
     }
 
-    err = hook_wrap2(show_map_vma_addr, before_show_map_vma, NULL, 0);
+    err = hook_wrap2(xol_add_vma_addr, before_xol_add_vma, NULL, 0);
     if(err){
-        logke("+Test-Log+ hook show_map_vma error\n");
+        logke("+Test-Log+ hook xol_add_vma error\n");
         return -1;
     }
 
@@ -301,7 +301,7 @@ static long kernel_trace_control0(const char *args, char *__user out_msg, int ou
 static long kernel_trace_exit(void *__user reserved)
 {
     inline_unhook_syscall(__NR_mincore, before_mincore, 0);
-    unhook(show_map_vma_addr);
+    unhook(xol_add_vma_addr);
     unhook(copy_insn_addr);
     rcu_read_unlock();//解锁，不然内核会崩
     for (int i = 0; i < hook_num; ++i) {

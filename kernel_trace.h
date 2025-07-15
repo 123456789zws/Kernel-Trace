@@ -9,11 +9,16 @@
 #define INS_LEN 4
 #define LOOKUP_FOLLOW		0x0001
 #define HASH_LEN_DECLARE u32 hash; u32 len
+#define PAGE_SIZE 4096
 
 struct inode;
 struct mm_struct;
 struct vfsmount;
 struct seq_file;
+struct page;
+
+typedef __bitwise unsigned int vm_fault_t;
+struct vm_fault;
 
 struct hlist_bl_node {
     struct hlist_bl_node *next, **pprev;
@@ -80,6 +85,53 @@ struct vm_area_struct {
 
     unsigned long vm_start;		/* Our start address within vm_mm. */
     unsigned long vm_end;
+};
+
+
+struct vm_special_mapping {
+	const char *name;	/* The name, e.g. "[vdso]". */
+
+	/*
+	 * If .fault is not provided, this points to a
+	 * NULL-terminated array of pages that back the special mapping.
+	 *
+	 * This must not be NULL unless .fault is provided.
+	 */
+	struct page **pages;
+
+	/*
+	 * If non-NULL, then this is called to resolve page faults
+	 * on the special mapping.  If used, .pages is not checked.
+	 */
+	vm_fault_t (*fault)(const struct vm_special_mapping *sm,
+				struct vm_area_struct *vma,
+				struct vm_fault *vmf);
+
+	int (*mremap)(const struct vm_special_mapping *sm,
+		     struct vm_area_struct *new_vma);
+};
+
+
+struct wait_queue_head {
+	spinlock_t		lock;
+	struct list_head	head;
+};
+typedef struct wait_queue_head wait_queue_head_t;
+
+
+struct xol_area {
+	wait_queue_head_t 		wq;		/* if all slots are busy */
+	atomic_t 			slot_count;	/* number of in-use slots */
+	unsigned long 			*bitmap;	/* 0 = free slot */
+
+	struct vm_special_mapping	xol_mapping;
+	struct page 			*pages[2];
+	/*
+	 * We keep the vma's vm_start rather than a pointer to the vma
+	 * itself.  The probed process or a naughty kernel module could make
+	 * the vma go away, and we must handle that reasonably gracefully.
+	 */
+	unsigned long 			vaddr;		/* Page(s) of instruction slots */
 };
 
 struct pid_namespace;
