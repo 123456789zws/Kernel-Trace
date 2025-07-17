@@ -30,7 +30,10 @@ int (*bpf_probe_read_user)(void *dst, u32 size,const void __user *unsafe_ptr) = 
 
 unsigned long (*get_unmapped_area)(struct file *file, unsigned long addr, unsigned long len,unsigned long pgoff, unsigned long flags) = 0;
 
-void *xol_add_vma_addr;
+char *(*special_mapping_name)(struct vm_area_struct *vma) = 0;
+
+void *install_special_mapping_addr;
+void *create_xol_area_addr;
 void *copy_insn_addr;
 
 
@@ -57,16 +60,25 @@ void before_copy_insn(hook_fargs5_t *args, void *udata){
     }
 }
 
-void before_xol_add_vma(hook_fargs2_t *args, void *udata){
-    struct xol_area *o_area;
+void before_create_xol_area(hook_fargs1_t *args, void *udata){
+    unsigned long vaddr = (unsigned long )args->arg0;
 
-    o_area = (struct xol_area*)args->arg1;
-    if(!o_area->vaddr){
-        o_area->xol_mapping.name = "Kernel-Trace";
-        o_area->vaddr = get_unmapped_area(NULL, 0,PAGE_SIZE, 0, 0);
-        logkd("+Test-Log+ create map item:Kernel-Trace\n");
+    if(!vaddr){
+        vaddr = get_unmapped_area(NULL, 0,PAGE_SIZE, 0, 0);
+        args->arg0 = vaddr;
+        logkd("+Test-Log+ change uprobe map addr to:%llx\n",vaddr);
     }
 
+}
+
+
+void before_install_special_mapping(hook_fargs6_t *args, void *udata){
+    struct vm_special_mapping *ospec;
+    ospec = (struct vm_special_mapping*)args->arg4;
+    if(strcmp(ospec->name,"[uprobes]")==0){
+        ospec->name = "Kernel-Trace";
+        logkd("+Test-Log+ create map item:Kernel-Trace\n");
+    }
 }
 
 void before_mincore(hook_fargs3_t *args, void *udata){
@@ -231,8 +243,11 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
     bpf_probe_read_user = (typeof(bpf_probe_read_user))kallsyms_lookup_name("bpf_probe_read_user");
 
     get_unmapped_area = (typeof(get_unmapped_area))kallsyms_lookup_name("get_unmapped_area");
+    special_mapping_name = (typeof(special_mapping_name))kallsyms_lookup_name("special_mapping_name");
 
-    xol_add_vma_addr = (void *)kallsyms_lookup_name("xol_add_vma");
+    install_special_mapping_addr = (void *)kallsyms_lookup_name("__install_special_mapping");
+
+    create_xol_area_addr = (void *)kallsyms_lookup_name("__create_xol_area");
 
     copy_insn_addr = (void *)kallsyms_lookup_name("__copy_insn");
 
@@ -254,15 +269,19 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
     logkd("+Test-Log+ bpf_probe_read_user:%llx\n",bpf_probe_read_user);
 
     logkd("+Test-Log+ get_unmapped_area:%llx\n",get_unmapped_area);
+    logkd("+Test-Log+ special_mapping_name:%llx\n",special_mapping_name);
 
-    logkd("+Test-Log+ xol_add_vma_addr:%llx\n",xol_add_vma_addr);
+    logkd("+Test-Log+ install_special_mapping_addr:%llx\n",install_special_mapping_addr);
+
+    logkd("+Test-Log+ create_xol_area_addr:%llx\n",create_xol_area_addr);
 
     logkd("+Test-Log+ copy_insn_addr:%llx\n",copy_insn_addr);
 
     if(!(mtask_pid_nr_ns && uprobe_register && uprobe_unregister
     && kern_path && igrab && path_put && rcu_read_unlock
     && rb_erase && rb_insert_color && rb_first && trace_printk
-    && bpf_probe_read_user && get_unmapped_area && xol_add_vma_addr && copy_insn_addr)){
+    && bpf_probe_read_user && get_unmapped_area && special_mapping_name
+    && install_special_mapping_addr && create_xol_area_addr && copy_insn_addr)){
         logke("+Test-Log+ can not find some fun addr\n");
         return -1;
     }
@@ -275,9 +294,15 @@ static long kernel_trace_init(const char *args, const char *event, void *__user 
         return -1;
     }
 
-    err = hook_wrap2(xol_add_vma_addr, before_xol_add_vma, NULL, 0);
+    err = hook_wrap6(install_special_mapping_addr, before_install_special_mapping, NULL, 0);
     if(err){
-        logke("+Test-Log+ hook xol_add_vma error\n");
+        logke("+Test-Log+ hook install_special_mapping_addr error\n");
+        return -1;
+    }
+
+    err = hook_wrap2(create_xol_area_addr, before_create_xol_area, NULL, 0);
+    if(err){
+        logke("+Test-Log+ hook create_xol_area_addr error\n");
         return -1;
     }
 
@@ -301,7 +326,8 @@ static long kernel_trace_control0(const char *args, char *__user out_msg, int ou
 static long kernel_trace_exit(void *__user reserved)
 {
     inline_unhook_syscall(__NR_mincore, before_mincore, 0);
-    unhook(xol_add_vma_addr);
+    unhook(install_special_mapping_addr);
+    unhook(create_xol_area_addr);
     unhook(copy_insn_addr);
     rcu_read_unlock();//解锁，不然内核会崩
     for (int i = 0; i < hook_num; ++i) {
