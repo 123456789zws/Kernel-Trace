@@ -3,14 +3,21 @@
 #include "uprobe_trace.h"
 #include "mrbtree.h"
 
-#define _THIS_IP_  ({ __label__ __here; __here: (unsigned long)&&__here; })
+//#define _THIS_IP_  ({ __label__ __here; __here: (unsigned long)&&__here; })
 #define MAX_PATH_LEN 300
 #define MAX_FUN_NAME 150
 #define INS_LEN 4
 #define LOOKUP_FOLLOW		0x0001
 #define HASH_LEN_DECLARE u32 hash; u32 len
 #define PAGE_SIZE 4096
+#define PAGE_SHIFT 12
 
+
+#define O_LARGEFILE 00100000
+#define O_RDONLY 00000000
+
+
+struct file;
 struct inode;
 struct mm_struct;
 struct vfsmount;
@@ -19,6 +26,10 @@ struct page;
 
 typedef __bitwise unsigned int vm_fault_t;
 struct vm_fault;
+
+struct address_space {
+	struct inode		*host;
+};
 
 struct hlist_bl_node {
     struct hlist_bl_node *next, **pprev;
@@ -133,5 +144,7 @@ struct xol_area {
 	 */
 	unsigned long 			vaddr;		/* Page(s) of instruction slots */
 };
+
+typedef void *fl_owner_t;
 
 struct pid_namespace;
